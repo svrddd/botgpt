@@ -41,7 +41,7 @@ def save_menu(menu):
 
 menu_data = load_menu()
 
-# REPLY KEYBOARDS (для нижних кнопок)
+# REPLY KEYBOARDS (нижние кнопки)
 def main_menu_kb(user_id=None):
     buttons = [
         [KeyboardButton(text='☕ Меню'), KeyboardButton(text='📍 Где мы находимся?')],
@@ -80,9 +80,9 @@ def payment_kb():
 
 # HELPERS
 def parse_menu_item(text):
-    # Пробуем извлечь название и цену из текста "Название - Цена₽"
+    # Извлечь название из "Название - Цена₽"
     if ' - ' in text and text.endswith('₽'):
-        name = text.split(' - ')[0]
+        name = text.split(' - ')[0].strip()
         return name
     return None
 
@@ -108,6 +108,12 @@ async def order_item(message: Message, state: FSMContext):
         return
 
     item_name = parse_menu_item(message.text)
+
+    # Отладка — можно удалить в продакшене
+    print(f"Received text: {message.text}")
+    print(f"Parsed item_name: {item_name}")
+    print(f"Menu keys: {list(menu_data.keys())}")
+
     if not item_name or item_name not in menu_data:
         await message.answer("Пожалуйста, выберите товар из меню или нажмите '🔙 Назад'.")
         return
@@ -133,20 +139,20 @@ async def choose_time(message: Message, state: FSMContext):
         await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
     elif message.text == 'Указать время':
         await message.answer("Введите время, к которому приготовить заказ (например, 15:30):")
+        # ждём ввода времени в следующем сообщении
         await OrderFSM.next()
     else:
         await message.answer("Пожалуйста, выберите вариант времени из клавиатуры.")
 
 @dp.message(OrderFSM.choosing_payment)
 async def set_custom_time(message: Message, state: FSMContext):
-    text = message.text
-    if text == '🔙 Назад':
+    if message.text == '🔙 Назад':
         await OrderFSM.choosing_time.set()
         await message.answer("Когда приготовить заказ?", reply_markup=time_kb())
         return
 
-    # Предполагаем, что пользователь ввёл кастомное время
-    await state.update_data(time=text)
+    # Здесь пользователь вводит кастомное время
+    await state.update_data(time=message.text)
     await OrderFSM.confirming_payment.set()
     await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
 
@@ -236,7 +242,7 @@ async def edit_menu(message: Message):
         await message.answer("Доступ запрещён", reply_markup=main_menu_kb(message.from_user.id))
         return
     await message.answer(
-        "Редактирование меню:\nДобавьте товар в формате: название;цена",
+        "Редактирование меню:\nДобавьте товар в формате: <название>;<цена>",
         reply_markup=main_menu_kb(message.from_user.id)
     )
 
@@ -246,9 +252,11 @@ async def add_menu_item(message: Message):
         return
     try:
         name, price = message.text.split(';')
-        menu_data[name.strip()] = {'price': int(price)}
+        name = name.strip()
+        price = int(price.strip())
+        menu_data[name] = {'price': price}
         save_menu(menu_data)
-        await message.answer(f"Добавлен новый товар: {name.strip()} за {price}₽", reply_markup=main_menu_kb(message.from_user.id))
+        await message.answer(f"Добавлен новый товар: {name} за {price}₽", reply_markup=main_menu_kb(message.from_user.id))
     except Exception:
         await message.answer("Ошибка добавления. Убедитесь, что формат такой: название;цена")
 
@@ -263,4 +271,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
