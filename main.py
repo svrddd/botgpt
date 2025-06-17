@@ -7,7 +7,6 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.client.default import DefaultBotProperties
 
 API_TOKEN = '7621100705:AAHJ7R4N4ihthLUjV7cvcP95WrAo4GQOvl8'
 ADMIN_CHAT_ID = '2105766790'
@@ -15,10 +14,7 @@ MENU_FILE = 'menu.json'
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(
-    token=API_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
 
 # STATES
@@ -94,7 +90,6 @@ async def cmd_start(message: Message):
 
 @dp.callback_query(F.data == 'menu')
 async def show_menu(callback: CallbackQuery):
-    await callback.answer()
     await callback.message.edit_text("📋 Меню:", reply_markup=menu_kb())
 
 @dp.callback_query(F.data.startswith('order:'))
@@ -104,7 +99,6 @@ async def order_item(callback: CallbackQuery, state: FSMContext):
     if item:
         await state.set_state(OrderFSM.choosing_time)
         await state.update_data(item=item_name)
-        await callback.answer()
         await callback.message.edit_text(
             f"Вы выбрали: <b>{item_name}</b> за <b>{item['price']}₽</b>\n\n"
             "Когда приготовить заказ?",
@@ -114,7 +108,6 @@ async def order_item(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith('time:'))
 async def choose_time(callback: CallbackQuery, state: FSMContext):
     choice = callback.data.split(':')[1]
-    await callback.answer()
     if choice == 'soon':
         await state.update_data(time='как можно скорее')
         await state.set_state(OrderFSM.choosing_payment)
@@ -137,7 +130,6 @@ async def choose_payment(callback: CallbackQuery, state: FSMContext):
     item = data.get('item')
     time = data.get('time')
     pay_text = 'СБП' if payment_method == 'sbp' else 'Картой'
-    await callback.answer()
     await callback.message.edit_text(
         f"Вы выбрали: <b>{item}</b>\n"
         f"Время приготовления: <b>{time}</b>\n"
@@ -156,33 +148,25 @@ async def confirm_payment(callback: CallbackQuery, state: FSMContext):
     time = data.get('time')
     payment = 'СБП' if data.get('payment') == 'sbp' else 'Картой'
     await bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"📥 Новый заказ:\nТовар: <b>{item}</b>\nВремя: {time}\nОплата: {payment}")
-    await callback.answer()
     await callback.message.edit_text("Спасибо за заказ! ☕\nОн скоро будет готов.", reply_markup=main_menu_kb(callback.from_user.id))
     await state.clear()
 
 @dp.callback_query(F.data == 'location')
 async def show_location(callback: CallbackQuery):
     yandex_link = "https://yandex.ru/maps/org/playa_coffee/63770758952/?ll=37.468172%2C56.141086&utm_source=share&z=18"
-    await callback.answer()
-    await callback.message.edit_text(
+    await callback.message.answer(
         "📍 Мы находимся по адресу: Playa Coffee\n"
         f"<a href='{yandex_link}'>Открыть в Яндекс.Картах</a>",
-        reply_markup=main_menu_kb(callback.from_user.id),
         disable_web_page_preview=True
     )
 
 @dp.callback_query(F.data == 'contacts')
 async def show_contacts(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.edit_text(
-        "📞 Наши контакты:\nTelegram-канал: @playacoffee\nhttps://t.me/playacoffee",
-        reply_markup=main_menu_kb(callback.from_user.id)
-    )
+    await callback.message.answer("📞 Наши контакты:\nTelegram-канал: @playacoffee")
 
 @dp.callback_query(F.data == 'feedback')
 async def feedback_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.edit_text("✍️ Напишите ваш отзыв или вопрос:", reply_markup=main_menu_kb(callback.from_user.id))
+    await callback.message.answer("✍️ Напишите ваш отзыв или вопрос:")
     await state.set_state(FeedbackFSM.writing_feedback)
 
 @dp.message(FeedbackFSM.writing_feedback)
@@ -196,7 +180,6 @@ async def edit_menu(callback: CallbackQuery):
     if str(callback.from_user.id) != ADMIN_CHAT_ID:
         await callback.answer("Доступ запрещён", show_alert=True)
         return
-    await callback.answer()
     await callback.message.edit_text(
         "Редактирование меню:\nДобавьте товар в формате: <название>;<цена>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -222,4 +205,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
