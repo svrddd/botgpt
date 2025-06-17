@@ -8,8 +8,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
-API_TOKEN = '7621100705:AAHJ7R4N4ihthLUjV7cvcP95WrAo4GQOvl8'
-ADMIN_CHAT_ID = '2105766790'
+API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+ADMIN_CHAT_ID = 'YOUR_ADMIN_CHAT_ID_HERE'
 MENU_FILE = 'menu.json'
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +23,7 @@ class OrderFSM(StatesGroup):
     choosing_time = State()
     choosing_payment = State()
     confirming_payment = State()
+    entering_custom_time = State()
 
 class FeedbackFSM(StatesGroup):
     writing_feedback = State()
@@ -59,31 +60,38 @@ def main_menu_kb(user_id=None):
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def menu_kb():
+def menu_kb(cart=None):
     keyboard = []
     row = []
     for i, item in enumerate(menu_data):
-        row.append(InlineKeyboardButton(text=f"{item} - {menu_data[item]['price']}₽", callback_data=f"order:{item}"))
+        count = cart.count(item) if cart else 0
+        label = f"{item} - {menu_data[item]['price']}₽"
+        if count:
+            label += f" ({count}x)"
+        row.append(InlineKeyboardButton(text=label, callback_data=f"order:{item}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
+    if cart:
+        keyboard.append([InlineKeyboardButton(text='🗑 Очистить корзину', callback_data='clear_cart')])
     keyboard.append([InlineKeyboardButton(text='🛒 Перейти к оформлению', callback_data='checkout')])
+    keyboard.append([InlineKeyboardButton(text='🔙 Назад', callback_data='main_menu')])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def time_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='Как можно скорее', callback_data='time:soon')],
         [InlineKeyboardButton(text='Указать время', callback_data='time:custom')],
-        [InlineKeyboardButton(text='🔙 Назад', callback_data='menu')]
+        [InlineKeyboardButton(text='🔙 Назад', callback_data='checkout')]
     ])
 
 def payment_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='СБП', callback_data='pay:sbp')],
         [InlineKeyboardButton(text='Картой', callback_data='pay:card')],
-        [InlineKeyboardButton(text='🔙 Назад', callback_data='menu')]
+        [InlineKeyboardButton(text='🔙 Назад', callback_data='time')]
     ])
 
 def delete_menu_kb():
@@ -98,15 +106,23 @@ def format_cart(cart):
     if not cart:
         return 'Корзина пуста.'
     text = '🛍 Ваша корзина:\n'
-    for item in cart:
+    unique_items = set(cart)
+    for item in unique_items:
         price = menu_data.get(item, {}).get('price', '?')
-        text += f"- {item} ({price}₽)\n"
+        count = cart.count(item)
+        text += f"- {item} x{count} ({int(price) * count}₽)\n"
     return text
 
 # ORDER FLOW
 @dp.callback_query(F.data == 'menu')
-async def show_menu(callback: CallbackQuery):
-    await callback.message.edit_text("📋 Меню:", reply_markup=menu_kb())
+async def show_menu(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    cart = data.get('cart', [])
+    await callback.message.edit_text("📋 Меню:", reply_markup=menu_kb(cart))
+
+@dp.callback_query(F.data == 'main_menu')
+async def back_to_main(callback: CallbackQuery):
+    await callback.message.edit_text("Главное меню:", reply_markup=main_menu_kb(callback.from_user.id))
 
 @dp.callback_query(F.data.startswith('order:'))
 async def add_to_cart(callback: CallbackQuery, state: FSMContext):
@@ -116,6 +132,13 @@ async def add_to_cart(callback: CallbackQuery, state: FSMContext):
     cart.append(item)
     await state.update_data(cart=cart)
     await callback.answer(f"Добавлено в корзину: {item}")
+    await callback.message.edit_reply_markup(reply_markup=menu_kb(cart))
+
+@dp.callback_query(F.data == 'clear_cart')
+async def clear_cart(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(cart=[])
+    await callback.message.edit_reply_markup(reply_markup=menu_kb([]))
+    await callback.answer("Корзина очищена")
 
 @dp.callback_query(F.data == 'checkout')
 async def proceed_checkout(callback: CallbackQuery, state: FSMContext):
@@ -130,6 +153,16 @@ async def proceed_checkout(callback: CallbackQuery, state: FSMContext):
         reply_markup=time_kb()
     )
 
+@dp.callback_query(F.data == 'time')
+async def back_to_time(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    cart = data.get('cart', [])
+    await state.set_state(OrderFSM.choosing_time)
+    await callback.message.edit_text(
+        format_cart(cart) + "\n\nКогда приготовить заказ?",
+        reply_markup=time_kb()
+    )
+
 @dp.callback_query(F.data.startswith('time:'))
 async def choose_time(callback: CallbackQuery, state: FSMContext):
     choice = callback.data.split(':')[1]
@@ -138,13 +171,16 @@ async def choose_time(callback: CallbackQuery, state: FSMContext):
         await state.set_state(OrderFSM.choosing_payment)
         await callback.message.edit_text("Выберите способ оплаты:", reply_markup=payment_kb())
     elif choice == 'custom':
-        await state.set_state(OrderFSM.choosing_payment)
-        await callback.message.edit_text("Введите время, к которому приготовить заказ (например, 15:30):")
+        await state.set_state(OrderFSM.entering_custom_time)
+        await callback.message.edit_text("Введите время (например, 15:30):\n\nОтправьте текстом или нажмите 'Назад'.",
+                                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                            [InlineKeyboardButton(text='🔙 Назад', callback_data='time')]
+                                        ]))
 
-@dp.message(OrderFSM.choosing_payment)
+@dp.message(OrderFSM.entering_custom_time)
 async def set_custom_time(message: Message, state: FSMContext):
     await state.update_data(time=message.text)
-    await state.set_state(OrderFSM.confirming_payment)
+    await state.set_state(OrderFSM.choosing_payment)
     await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
 
 @dp.callback_query(F.data.startswith('pay:'))
@@ -155,11 +191,12 @@ async def choose_payment(callback: CallbackQuery, state: FSMContext):
     cart = data.get('cart', [])
     time = data.get('time')
     pay_text = 'СБП' if payment_method == 'sbp' else 'Картой'
+    await state.set_state(OrderFSM.confirming_payment)
     await callback.message.edit_text(
-        f"{format_cart(cart)}\nВремя приготовления: <b>{time}</b>\nОплата: <b>{pay_text}</b>",
+        f"{format_cart(cart)}\nВремя: <b>{time}</b>\nОплата: <b>{pay_text}</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text='✅ Подтвердить', callback_data='confirm_payment')],
-            [InlineKeyboardButton(text='🔙 Назад', callback_data='menu')]
+            [InlineKeyboardButton(text='🔙 Назад', callback_data='time')]
         ])
     )
 
@@ -216,3 +253,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
