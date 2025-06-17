@@ -76,11 +76,12 @@ def payment_kb():
     ], resize_keyboard=True)
 
 @dp.message(F.text.lower().in_(['start', '/start']))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
     await message.answer("Добро пожаловать в кофейню! ☕\nВыберите действие:", reply_markup=main_menu_kb(message.from_user.id))
 
 @dp.message(F.text == '☕ Меню')
-async def show_menu(message: Message):
+async def show_menu(message: Message, state: FSMContext):
     if not menu_data:
         await message.answer("Меню пока пустое.", reply_markup=main_menu_kb(message.from_user.id))
         return
@@ -89,7 +90,7 @@ async def show_menu(message: Message):
     for item, data in menu_data.items():
         text_menu += f"{item} - <b>{data['price']}₽</b>\n"
     await message.answer(text_menu, reply_markup=menu_buttons_kb())
-    await OrderFSM.choosing_item.set()
+    await state.set_state(OrderFSM.choosing_item)
 
 @dp.message(OrderFSM.choosing_item)
 async def order_item(message: Message, state: FSMContext):
@@ -105,7 +106,7 @@ async def order_item(message: Message, state: FSMContext):
 
     price = menu_data[item_name]['price']
     await state.update_data(item=item_name)
-    await OrderFSM.choosing_time.set()
+    await state.set_state(OrderFSM.choosing_time)
     await message.answer(
         f"Вы выбрали: <b>{item_name}</b> за <b>{price}₽</b>\n\n"
         "Когда приготовить заказ?",
@@ -115,39 +116,61 @@ async def order_item(message: Message, state: FSMContext):
 @dp.message(OrderFSM.choosing_time)
 async def choose_time(message: Message, state: FSMContext):
     if message.text == '🔙 Назад':
-        await OrderFSM.choosing_item.set()
+        await state.set_state(OrderFSM.choosing_item)
         await message.answer("Выберите товар:", reply_markup=menu_buttons_kb())
         return
 
     if message.text == 'Как можно скорее':
         await state.update_data(time='как можно скорее')
-        await OrderFSM.choosing_payment.set()
+        await state.set_state(OrderFSM.choosing_payment)
         await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
     elif message.text == 'Указать время':
         await message.answer("Введите время, к которому приготовить заказ (например, 15:30):")
-        # Переходим к следующему состоянию для ввода времени вручную
-        await OrderFSM.next()
+        # Следующее состояние — для ввода конкретного времени
+        await state.set_state(OrderFSM.choosing_payment)  # Если хочешь ввести след. состояние для ввода времени, создай отдельное.
     else:
         await message.answer("Пожалуйста, выберите вариант времени из клавиатуры.")
 
 @dp.message(OrderFSM.choosing_payment)
 async def set_custom_time(message: Message, state: FSMContext):
     if message.text == '🔙 Назад':
-        await OrderFSM.choosing_time.set()
+        await state.set_state(OrderFSM.choosing_time)
         await message.answer("Когда приготовить заказ?", reply_markup=time_kb())
         return
 
-    await state.update_data(time=message.text)
-    await OrderFSM.confirming_payment.set()
-    await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
-
-@dp.message(OrderFSM.confirming_payment)
-async def confirming_payment_handler(message: Message, state: FSMContext):
-    if message.text == '🔙 Назад':
-        await OrderFSM.choosing_payment.set()
+    # Если пользователь вводит конкретное время
+    if ':' in message.text:
+        await state.update_data(time=message.text)
         await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
         return
 
+    if message.text in ['СБП', 'Картой']:
+        payment_method = 'sbp' if message.text == 'СБП' else 'card'
+        await state.update_data(payment=payment_method)
+
+        data = await state.get_data()
+        item = data.get('item')
+        time = data.get('time')
+        pay_text = message.text
+
+        confirm_kb = ReplyKeyboardMarkup(keyboard=[
+            [KeyboardButton(text='✅ Подтвердить')],
+            [KeyboardButton(text='🔙 Назад')]
+        ], resize_keyboard=True)
+
+        await state.set_state(OrderFSM.confirming_payment)
+        await message.answer(
+            f"Вы выбрали: <b>{item}</b>\n"
+            f"Время приготовления: <b>{time}</b>\n"
+            f"Способ оплаты: <b>{pay_text}</b>\n\n"
+            "Нажмите \"✅ Подтвердить\" для отправки заказа.",
+            reply_markup=confirm_kb
+        )
+    else:
+        await message.answer("Пожалуйста, выберите способ оплаты из клавиатуры или введите время.")
+
+@dp.message(OrderFSM.confirming_payment)
+async def confirm_payment(message: Message, state: FSMContext):
     if message.text == '✅ Подтвердить':
         data = await state.get_data()
         item = data.get('item')
@@ -159,31 +182,11 @@ async def confirming_payment_handler(message: Message, state: FSMContext):
 
         await message.answer("Спасибо за заказ! ☕\nОн скоро будет готов.", reply_markup=main_menu_kb(message.from_user.id))
         await state.clear()
-        return
-
-    if message.text in ['СБП', 'Картой']:
-        payment_method = 'sbp' if message.text == 'СБП' else 'card'
-        await state.update_data(payment=payment_method)
-
-        data = await state.get_data()
-        item = data.get('item')
-        time = data.get('time')
-
-        confirm_kb = ReplyKeyboardMarkup(keyboard=[
-            [KeyboardButton(text='✅ Подтвердить')],
-            [KeyboardButton(text='🔙 Назад')]
-        ], resize_keyboard=True)
-
-        await message.answer(
-            f"Вы выбрали: <b>{item}</b>\n"
-            f"Время приготовления: <b>{time}</b>\n"
-            f"Способ оплаты: <b>{message.text}</b>\n\n"
-            "Нажмите \"✅ Подтвердить\" для отправки заказа.",
-            reply_markup=confirm_kb
-        )
-        return
-
-    await message.answer("Пожалуйста, выберите способ оплаты из клавиатуры или нажмите '✅ Подтвердить'.")
+    elif message.text == '🔙 Назад':
+        await state.set_state(OrderFSM.choosing_payment)
+        await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
+    else:
+        await message.answer("Пожалуйста, нажмите '✅ Подтвердить' или '🔙 Назад'.")
 
 @dp.message(F.text == '📍 Где мы находимся?')
 async def show_location(message: Message):
@@ -204,11 +207,47 @@ async def show_contacts(message: Message):
 
 @dp.message(F.text == '✉️ Обратная связь')
 async def feedback_start(message: Message, state: FSMContext):
-    await message.answer("✍️ Напишите ваш отзыв или вопрос:", reply_markup=main_menu_kb(message.from_user.id))
     await state.set_state(FeedbackFSM.writing_feedback)
+    await message.answer("✍️ Напишите ваш отзыв или вопрос:", reply_markup=main_menu_kb(message.from_user.id))
 
 @dp.message(FeedbackFSM.writing_feedback)
 async def receive_feedback(message: Message, state: FSMContext):
     username = message.from_user.username or message.from_user.full_name
     await bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"✉️ Обратная связь от @{username}:\n{message.text}")
-    await message.answer("Спасибо! Мы учтём ваш отзыв.", reply_markup=main_menu_kb
+    await message.answer("Спасибо! Мы учтём ваш отзыв.", reply_markup=main_menu_kb(message.from_user.id))
+    await state.clear()
+
+@dp.message(F.text == '🛠 Редактировать меню')
+async def edit_menu(message: Message):
+    if str(message.from_user.id) != ADMIN_CHAT_ID:
+        await message.answer("Доступ запрещён", reply_markup=main_menu_kb(message.from_user.id))
+        return
+    await message.answer(
+        "Редактирование меню:\nДобавьте товар в формате: <название>;<цена>",
+        reply_markup=main_menu_kb(message.from_user.id)
+    )
+
+@dp.message(F.text.regexp(r'^.+;\d+$'))
+async def add_menu_item(message: Message):
+    if str(message.from_user.id) != ADMIN_CHAT_ID:
+        return
+    try:
+        name, price = message.text.split(';')
+        name = name.strip()
+        price = int(price.strip())
+        menu_data[name] = {'price': price}
+        save_menu(menu_data)
+        await message.answer(f"Добавлен новый товар: {name} за {price}₽", reply_markup=main_menu_kb(message.from_user.id))
+    except Exception:
+        await message.answer("Ошибка добавления. Убедитесь, что формат такой: название;цена")
+
+@dp.message(F.text == '🔙 Назад')
+async def back_to_main(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=main_menu_kb(message.from_user.id))
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    asyncio.run(main())
