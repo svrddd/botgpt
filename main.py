@@ -7,14 +7,18 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
 
-API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
-ADMIN_CHAT_ID = 'YOUR_ADMIN_CHAT_ID_HERE'
+API_TOKEN = '7621100705:AAHJ7R4N4ihthLUjV7cvcP95WrAo4GQOvl8'
+ADMIN_CHAT_ID = '2105766790'
 MENU_FILE = 'menu.json'
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(
+    token=API_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher(storage=MemoryStorage())
 
 # STATES
@@ -23,7 +27,6 @@ class OrderFSM(StatesGroup):
     choosing_time = State()
     choosing_payment = State()
     confirming_payment = State()
-    entering_custom_time = State()
 
 class FeedbackFSM(StatesGroup):
     writing_feedback = State()
@@ -60,127 +63,70 @@ def main_menu_kb(user_id=None):
         ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def menu_kb(cart=None):
+def menu_kb():
     keyboard = []
     row = []
     for i, item in enumerate(menu_data):
-        count = cart.count(item) if cart else 0
-        label = f"{item} - {menu_data[item]['price']}₽"
-        if count:
-            label += f" ({count}x)"
-        row.append(InlineKeyboardButton(text=label, callback_data=f"order:{item}"))
+        row.append(InlineKeyboardButton(text=f"{item} - {menu_data[item]['price']}₽", callback_data=f"order:{item}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    if cart:
-        keyboard.append([InlineKeyboardButton(text='🗑 Очистить корзину', callback_data='clear_cart')])
-    keyboard.append([InlineKeyboardButton(text='🛒 Перейти к оформлению', callback_data='checkout')])
-    keyboard.append([InlineKeyboardButton(text='🔙 Назад', callback_data='main_menu')])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def time_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='Как можно скорее', callback_data='time:soon')],
-        [InlineKeyboardButton(text='Указать время', callback_data='time:custom')],
-        [InlineKeyboardButton(text='🔙 Назад', callback_data='checkout')]
+        [InlineKeyboardButton(text='Указать время', callback_data='time:custom')]
     ])
 
 def payment_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='СБП', callback_data='pay:sbp')],
-        [InlineKeyboardButton(text='Картой', callback_data='pay:card')],
-        [InlineKeyboardButton(text='🔙 Назад', callback_data='time')]
+        [InlineKeyboardButton(text='Картой', callback_data='pay:card')]
     ])
 
-def delete_menu_kb():
-    keyboard = [
-        [InlineKeyboardButton(text=item, callback_data=f"delete_item:{item}")] for item in menu_data
-    ]
-    keyboard.append([InlineKeyboardButton(text='🔙 Назад', callback_data='edit_menu')])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+# HANDLERS
+@dp.message(F.text, F.text.lower().in_(['start', '/start']))
+async def cmd_start(message: Message):
+    await message.answer("Добро пожаловать в кофейню! ☕\nВыберите действие:", reply_markup=main_menu_kb(message.from_user.id))
 
-# FSM Helpers
-def format_cart(cart):
-    if not cart:
-        return 'Корзина пуста.'
-    text = '🛍 Ваша корзина:\n'
-    unique_items = set(cart)
-    for item in unique_items:
-        price = menu_data.get(item, {}).get('price', '?')
-        count = cart.count(item)
-        text += f"- {item} x{count} ({int(price) * count}₽)\n"
-    return text
-
-# ORDER FLOW
 @dp.callback_query(F.data == 'menu')
-async def show_menu(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    cart = data.get('cart', [])
-    await callback.message.edit_text("📋 Меню:", reply_markup=menu_kb(cart))
-
-@dp.callback_query(F.data == 'main_menu')
-async def back_to_main(callback: CallbackQuery):
-    await callback.message.edit_text("Главное меню:", reply_markup=main_menu_kb(callback.from_user.id))
+async def show_menu(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("📋 Меню:", reply_markup=menu_kb())
 
 @dp.callback_query(F.data.startswith('order:'))
-async def add_to_cart(callback: CallbackQuery, state: FSMContext):
-    item = callback.data.split(':')[1]
-    data = await state.get_data()
-    cart = data.get('cart', [])
-    cart.append(item)
-    await state.update_data(cart=cart)
-    await callback.answer(f"Добавлено в корзину: {item}")
-    await callback.message.edit_reply_markup(reply_markup=menu_kb(cart))
-
-@dp.callback_query(F.data == 'clear_cart')
-async def clear_cart(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(cart=[])
-    await callback.message.edit_reply_markup(reply_markup=menu_kb([]))
-    await callback.answer("Корзина очищена")
-
-@dp.callback_query(F.data == 'checkout')
-async def proceed_checkout(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    cart = data.get('cart', [])
-    if not cart:
-        await callback.answer("Корзина пуста!", show_alert=True)
-        return
-    await state.set_state(OrderFSM.choosing_time)
-    await callback.message.edit_text(
-        format_cart(cart) + "\n\nКогда приготовить заказ?",
-        reply_markup=time_kb()
-    )
-
-@dp.callback_query(F.data == 'time')
-async def back_to_time(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    cart = data.get('cart', [])
-    await state.set_state(OrderFSM.choosing_time)
-    await callback.message.edit_text(
-        format_cart(cart) + "\n\nКогда приготовить заказ?",
-        reply_markup=time_kb()
-    )
+async def order_item(callback: CallbackQuery, state: FSMContext):
+    item_name = callback.data.split(':')[1]
+    item = menu_data.get(item_name)
+    if item:
+        await state.set_state(OrderFSM.choosing_time)
+        await state.update_data(item=item_name)
+        await callback.answer()
+        await callback.message.edit_text(
+            f"Вы выбрали: <b>{item_name}</b> за <b>{item['price']}₽</b>\n\n"
+            "Когда приготовить заказ?",
+            reply_markup=time_kb()
+        )
 
 @dp.callback_query(F.data.startswith('time:'))
 async def choose_time(callback: CallbackQuery, state: FSMContext):
     choice = callback.data.split(':')[1]
+    await callback.answer()
     if choice == 'soon':
         await state.update_data(time='как можно скорее')
         await state.set_state(OrderFSM.choosing_payment)
         await callback.message.edit_text("Выберите способ оплаты:", reply_markup=payment_kb())
     elif choice == 'custom':
-        await state.set_state(OrderFSM.entering_custom_time)
-        await callback.message.edit_text("Введите время (например, 15:30):\n\nОтправьте текстом или нажмите 'Назад'.",
-                                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                            [InlineKeyboardButton(text='🔙 Назад', callback_data='time')]
-                                        ]))
+        await state.set_state(OrderFSM.choosing_payment)
+        await callback.message.edit_text("Введите время, к которому приготовить заказ (например, 15:30):")
 
-@dp.message(OrderFSM.entering_custom_time)
+@dp.message(OrderFSM.choosing_payment)
 async def set_custom_time(message: Message, state: FSMContext):
     await state.update_data(time=message.text)
-    await state.set_state(OrderFSM.choosing_payment)
+    await state.set_state(OrderFSM.confirming_payment)
     await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
 
 @dp.callback_query(F.data.startswith('pay:'))
@@ -188,27 +134,61 @@ async def choose_payment(callback: CallbackQuery, state: FSMContext):
     payment_method = callback.data.split(':')[1]
     await state.update_data(payment=payment_method)
     data = await state.get_data()
-    cart = data.get('cart', [])
+    item = data.get('item')
     time = data.get('time')
     pay_text = 'СБП' if payment_method == 'sbp' else 'Картой'
-    await state.set_state(OrderFSM.confirming_payment)
+    await callback.answer()
     await callback.message.edit_text(
-        f"{format_cart(cart)}\nВремя: <b>{time}</b>\nОплата: <b>{pay_text}</b>",
+        f"Вы выбрали: <b>{item}</b>\n"
+        f"Время приготовления: <b>{time}</b>\n"
+        f"Способ оплаты: <b>{pay_text}</b>\n\n"
+        "Нажмите \"Подтвердить\" для отправки заказа.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text='✅ Подтвердить', callback_data='confirm_payment')],
-            [InlineKeyboardButton(text='🔙 Назад', callback_data='time')]
+            [InlineKeyboardButton(text='🔙 Назад', callback_data='menu')]
         ])
     )
 
 @dp.callback_query(F.data == 'confirm_payment')
 async def confirm_payment(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    cart = data.get('cart', [])
+    item = data.get('item')
     time = data.get('time')
     payment = 'СБП' if data.get('payment') == 'sbp' else 'Картой'
-    order_text = format_cart(cart)
-    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"📥 Новый заказ:\n{order_text}\nВремя: {time}\nОплата: {payment}")
-    await callback.message.edit_text("Спасибо за заказ! ☕ Он скоро будет готов.", reply_markup=main_menu_kb(callback.from_user.id))
+    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"📥 Новый заказ:\nТовар: <b>{item}</b>\nВремя: {time}\nОплата: {payment}")
+    await callback.answer()
+    await callback.message.edit_text("Спасибо за заказ! ☕\nОн скоро будет готов.", reply_markup=main_menu_kb(callback.from_user.id))
+    await state.clear()
+
+@dp.callback_query(F.data == 'location')
+async def show_location(callback: CallbackQuery):
+    yandex_link = "https://yandex.ru/maps/org/playa_coffee/63770758952/?ll=37.468172%2C56.141086&utm_source=share&z=18"
+    await callback.answer()
+    await callback.message.edit_text(
+        "📍 Мы находимся по адресу: Playa Coffee\n"
+        f"<a href='{yandex_link}'>Открыть в Яндекс.Картах</a>",
+        reply_markup=main_menu_kb(callback.from_user.id),
+        disable_web_page_preview=True
+    )
+
+@dp.callback_query(F.data == 'contacts')
+async def show_contacts(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "📞 Наши контакты:\nTelegram-канал: @playacoffee\nhttps://t.me/playacoffee",
+        reply_markup=main_menu_kb(callback.from_user.id)
+    )
+
+@dp.callback_query(F.data == 'feedback')
+async def feedback_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.edit_text("✍️ Напишите ваш отзыв или вопрос:", reply_markup=main_menu_kb(callback.from_user.id))
+    await state.set_state(FeedbackFSM.writing_feedback)
+
+@dp.message(FeedbackFSM.writing_feedback)
+async def receive_feedback(message: Message, state: FSMContext):
+    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"✉️ Обратная связь от @{message.from_user.username}:\n{message.text}")
+    await message.answer("Спасибо! Мы учтём ваш отзыв.", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
 
 @dp.callback_query(F.data == 'edit_menu')
@@ -216,36 +196,25 @@ async def edit_menu(callback: CallbackQuery):
     if str(callback.from_user.id) != ADMIN_CHAT_ID:
         await callback.answer("Доступ запрещён", show_alert=True)
         return
+    await callback.answer()
     await callback.message.edit_text(
         "Редактирование меню:\nДобавьте товар в формате: <название>;<цена>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text='🗑 Удалить позицию', callback_data='delete_menu')],
             [InlineKeyboardButton(text='🔙 Назад', callback_data='menu')]
         ])
     )
 
-@dp.callback_query(F.data == 'delete_menu')
-async def choose_item_to_delete(callback: CallbackQuery):
-    if str(callback.from_user.id) != ADMIN_CHAT_ID:
-        await callback.answer("Доступ запрещён", show_alert=True)
+@dp.message(F.text.regexp(r'^.+;\d+$'))
+async def add_menu_item(message: Message):
+    if str(message.from_user.id) != ADMIN_CHAT_ID:
         return
-    if not menu_data:
-        await callback.message.edit_text("Меню пусто.", reply_markup=main_menu_kb(callback.from_user.id))
-        return
-    await callback.message.edit_text("Выберите позицию для удаления:", reply_markup=delete_menu_kb())
-
-@dp.callback_query(F.data.startswith('delete_item:'))
-async def delete_menu_item(callback: CallbackQuery):
-    if str(callback.from_user.id) != ADMIN_CHAT_ID:
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-    item = callback.data.split(':')[1]
-    if item in menu_data:
-        del menu_data[item]
+    try:
+        name, price = message.text.split(';')
+        menu_data[name.strip()] = {'price': int(price)}
         save_menu(menu_data)
-        await callback.message.edit_text(f"Позиция '{item}' удалена.", reply_markup=main_menu_kb(callback.from_user.id))
-    else:
-        await callback.answer("Позиция не найдена", show_alert=True)
+        await message.answer(f"Добавлен новый товар: {name.strip()} за {price}₽", reply_markup=main_menu_kb(message.from_user.id))
+    except Exception as e:
+        await message.answer("Ошибка добавления. Убедитесь, что формат такой: название;цена")
 
 # ENTRY POINT
 async def main():
