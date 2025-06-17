@@ -7,7 +7,6 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.client.default import DefaultBotProperties
 
 API_TOKEN = '7621100705:AAHJ7R4N4ihthLUjV7cvcP95WrAo4GQOvl8'
 ADMIN_CHAT_ID = '2105766790'
@@ -15,11 +14,12 @@ MENU_FILE = 'menu.json'
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(
-    token=API_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+# Создаём объект бота с указанием parse_mode напрямую
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
+
+# ... остальной код без изменений ...
+
 
 # STATES
 class OrderFSM(StatesGroup):
