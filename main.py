@@ -78,9 +78,14 @@ def payment_kb():
         [KeyboardButton(text='🔙 Назад')]
     ], resize_keyboard=True)
 
+def confirm_kb():
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text='✅ Подтвердить')],
+        [KeyboardButton(text='🔙 Назад')]
+    ], resize_keyboard=True)
+
 # HELPERS
 def parse_menu_item(text):
-    # Пробуем извлечь название и цену из текста "Название - Цена₽"
     if ' - ' in text and text.endswith('₽'):
         name = text.split(' - ')[0]
         return name
@@ -170,17 +175,12 @@ async def choose_payment(message: Message, state: FSMContext):
     time = data.get('time')
     pay_text = message.text
 
-    confirm_kb = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text='✅ Подтвердить')],
-        [KeyboardButton(text='🔙 Назад')]
-    ], resize_keyboard=True)
-
     await message.answer(
         f"Вы выбрали: <b>{item}</b>\n"
         f"Время приготовления: <b>{time}</b>\n"
         f"Способ оплаты: <b>{pay_text}</b>\n\n"
         "Нажмите \"✅ Подтвердить\" для отправки заказа.",
-        reply_markup=confirm_kb
+        reply_markup=confirm_kb()
     )
 
 @dp.message(OrderFSM.confirming_payment)
@@ -255,6 +255,7 @@ async def add_menu_item(message: Message):
 
 @dp.message(F.text == '🔙 Назад')
 async def back_to_main(message: Message, state: FSMContext):
+    # Очистим состояния, чтобы кнопка "Назад" всегда возвращала в главное меню
     await state.clear()
     await message.answer("Главное меню:", reply_markup=main_menu_kb(message.from_user.id))
 
