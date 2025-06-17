@@ -14,12 +14,8 @@ MENU_FILE = 'menu.json'
 
 logging.basicConfig(level=logging.INFO)
 
-# Создаём объект бота с указанием parse_mode напрямую
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
-
-# ... остальной код без изменений ...
-
 
 # STATES
 class OrderFSM(StatesGroup):
@@ -213,7 +209,7 @@ async def add_menu_item(message: Message):
         menu_data[name.strip()] = {'price': int(price)}
         save_menu(menu_data)
         await message.answer(f"Добавлен новый товар: {name.strip()} за {price}₽", reply_markup=main_menu_kb(message.from_user.id))
-    except Exception as e:
+    except Exception:
         await message.answer("Ошибка добавления. Убедитесь, что формат такой: название;цена")
 
 # ENTRY POINT
@@ -222,4 +218,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
