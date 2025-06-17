@@ -153,20 +153,21 @@ async def confirm_payment(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == 'location')
 async def show_location(callback: CallbackQuery):
-    yandex_link = "https://yandex.ru/maps/org/playa_coffee/63770758952/?ll=37.468172%2C56.141086&utm_source=share&z=18"
+    yandex_link = "https://yandex.ru/maps/org/playa_coffee/63770758952/?ll=37.468172%2C56.141086&utm_source=share&z=18.92"
     await callback.message.answer(
         "📍 Мы находимся по адресу: Playa Coffee\n"
         f"<a href='{yandex_link}'>Открыть в Яндекс.Картах</a>",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
+        reply_markup=main_menu_kb(callback.from_user.id)
     )
 
 @dp.callback_query(F.data == 'contacts')
 async def show_contacts(callback: CallbackQuery):
-    await callback.message.answer("📞 Наши контакты:\nTelegram-канал: @playacoffee")
+    await callback.message.edit_text("📞 Наши контакты:\nTelegram-канал: @playacoffee")
 
 @dp.callback_query(F.data == 'feedback')
 async def feedback_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("✍️ Напишите ваш отзыв или вопрос:")
+    await callback.message.edit_text("✍️ Напишите ваш отзыв или вопрос:")
     await state.set_state(FeedbackFSM.writing_feedback)
 
 @dp.message(FeedbackFSM.writing_feedback)
@@ -202,6 +203,10 @@ async def add_menu_item(message: Message):
 # ENTRY POINT
 async def main():
     await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    asyncio.run(main())
+
 
 if __name__ == '__main__':
     asyncio.run(main())
