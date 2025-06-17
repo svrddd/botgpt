@@ -2,7 +2,7 @@ import asyncio
 import logging
 import json
 from aiogram import Bot, Dispatcher, F, types
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.enums import ParseMode
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -41,163 +41,204 @@ def save_menu(menu):
 
 menu_data = load_menu()
 
-# MARKUPS
+# REPLY KEYBOARDS (для нижних кнопок)
 def main_menu_kb(user_id=None):
     buttons = [
-        [
-            InlineKeyboardButton(text='☕ Меню', callback_data='menu'),
-            InlineKeyboardButton(text='📍 Где мы находимся?', callback_data='location')
-        ],
-        [
-            InlineKeyboardButton(text='📞 Контакты', callback_data='contacts'),
-            InlineKeyboardButton(text='✉️ Обратная связь', callback_data='feedback')
-        ]
+        [KeyboardButton(text='☕ Меню'), KeyboardButton(text='📍 Где мы находимся?')],
+        [KeyboardButton(text='📞 Контакты'), KeyboardButton(text='✉️ Обратная связь')],
     ]
     if str(user_id) == ADMIN_CHAT_ID:
-        buttons.append([
-            InlineKeyboardButton(text='🛠 Редактировать меню', callback_data='edit_menu')
-        ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+        buttons.append([KeyboardButton(text='🛠 Редактировать меню')])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 def menu_kb():
     keyboard = []
     row = []
     for i, item in enumerate(menu_data):
-        row.append(InlineKeyboardButton(text=f"{item} - {menu_data[item]['price']}₽", callback_data=f"order:{item}"))
+        row.append(KeyboardButton(text=f"{item} - {menu_data[item]['price']}₽"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    keyboard.append([KeyboardButton(text='🔙 Назад')])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 def time_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='Как можно скорее', callback_data='time:soon')],
-        [InlineKeyboardButton(text='Указать время', callback_data='time:custom')]
-    ])
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text='Как можно скорее')],
+        [KeyboardButton(text='Указать время')],
+        [KeyboardButton(text='🔙 Назад')]
+    ], resize_keyboard=True)
 
 def payment_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='СБП', callback_data='pay:sbp')],
-        [InlineKeyboardButton(text='Картой', callback_data='pay:card')]
-    ])
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text='СБП')],
+        [KeyboardButton(text='Картой')],
+        [KeyboardButton(text='🔙 Назад')]
+    ], resize_keyboard=True)
+
+# HELPERS
+def parse_menu_item(text):
+    # Пробуем извлечь название и цену из текста "Название - Цена₽"
+    if ' - ' in text and text.endswith('₽'):
+        name = text.split(' - ')[0]
+        return name
+    return None
 
 # HANDLERS
-@dp.message(F.text, F.text.lower().in_(['start', '/start']))
+
+@dp.message(F.text.lower().in_(['start', '/start']))
 async def cmd_start(message: Message):
     await message.answer("Добро пожаловать в кофейню! ☕\nВыберите действие:", reply_markup=main_menu_kb(message.from_user.id))
 
-@dp.callback_query(F.data == 'menu')
-async def show_menu(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.edit_text("📋 Меню:", reply_markup=menu_kb())
+@dp.message(F.text == '☕ Меню')
+async def show_menu(message: Message):
+    if not menu_data:
+        await message.answer("Меню пока пустое.", reply_markup=main_menu_kb(message.from_user.id))
+        return
+    await message.answer("📋 Меню:", reply_markup=menu_kb())
+    await OrderFSM.choosing_item.set()
 
-@dp.callback_query(F.data.startswith('order:'))
-async def order_item(callback: CallbackQuery, state: FSMContext):
-    item_name = callback.data.split(':')[1]
-    item = menu_data.get(item_name)
-    if item:
-        await state.set_state(OrderFSM.choosing_time)
-        await state.update_data(item=item_name)
-        await callback.answer()
-        await callback.message.edit_text(
-            f"Вы выбрали: <b>{item_name}</b> за <b>{item['price']}₽</b>\n\n"
-            "Когда приготовить заказ?",
-            reply_markup=time_kb()
-        )
+@dp.message(OrderFSM.choosing_item)
+async def order_item(message: Message, state: FSMContext):
+    if message.text == '🔙 Назад':
+        await state.clear()
+        await message.answer("Главное меню:", reply_markup=main_menu_kb(message.from_user.id))
+        return
 
-@dp.callback_query(F.data.startswith('time:'))
-async def choose_time(callback: CallbackQuery, state: FSMContext):
-    choice = callback.data.split(':')[1]
-    await callback.answer()
-    if choice == 'soon':
+    item_name = parse_menu_item(message.text)
+    if not item_name or item_name not in menu_data:
+        await message.answer("Пожалуйста, выберите товар из меню или нажмите '🔙 Назад'.")
+        return
+
+    await state.update_data(item=item_name)
+    await OrderFSM.choosing_time.set()
+    await message.answer(
+        f"Вы выбрали: <b>{item_name}</b> за <b>{menu_data[item_name]['price']}₽</b>\n\n"
+        "Когда приготовить заказ?",
+        reply_markup=time_kb()
+    )
+
+@dp.message(OrderFSM.choosing_time)
+async def choose_time(message: Message, state: FSMContext):
+    if message.text == '🔙 Назад':
+        await OrderFSM.choosing_item.set()
+        await message.answer("Выберите товар:", reply_markup=menu_kb())
+        return
+
+    if message.text == 'Как можно скорее':
         await state.update_data(time='как можно скорее')
-        await state.set_state(OrderFSM.choosing_payment)
-        await callback.message.edit_text("Выберите способ оплаты:", reply_markup=payment_kb())
-    elif choice == 'custom':
-        await state.set_state(OrderFSM.choosing_payment)
-        await callback.message.edit_text("Введите время, к которому приготовить заказ (например, 15:30):")
+        await OrderFSM.choosing_payment.set()
+        await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
+    elif message.text == 'Указать время':
+        await message.answer("Введите время, к которому приготовить заказ (например, 15:30):")
+        # ждём ввода времени в следующем сообщении
+        await OrderFSM.next()
+    else:
+        await message.answer("Пожалуйста, выберите вариант времени из клавиатуры.")
 
 @dp.message(OrderFSM.choosing_payment)
 async def set_custom_time(message: Message, state: FSMContext):
-    await state.update_data(time=message.text)
-    await state.set_state(OrderFSM.confirming_payment)
+    text = message.text
+    if text == '🔙 Назад':
+        await OrderFSM.choosing_time.set()
+        await message.answer("Когда приготовить заказ?", reply_markup=time_kb())
+        return
+
+    # Предполагаем, что пользователь ввёл кастомное время
+    await state.update_data(time=text)
+    await OrderFSM.confirming_payment.set()
     await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
 
-@dp.callback_query(F.data.startswith('pay:'))
-async def choose_payment(callback: CallbackQuery, state: FSMContext):
-    payment_method = callback.data.split(':')[1]
+@dp.message(OrderFSM.confirming_payment)
+async def choose_payment(message: Message, state: FSMContext):
+    if message.text == '🔙 Назад':
+        await OrderFSM.choosing_payment.set()
+        await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
+        return
+
+    if message.text not in ['СБП', 'Картой']:
+        await message.answer("Пожалуйста, выберите способ оплаты из клавиатуры.")
+        return
+
+    payment_method = 'sbp' if message.text == 'СБП' else 'card'
     await state.update_data(payment=payment_method)
+
     data = await state.get_data()
     item = data.get('item')
     time = data.get('time')
-    pay_text = 'СБП' if payment_method == 'sbp' else 'Картой'
-    await callback.answer()
-    await callback.message.edit_text(
+    pay_text = message.text
+
+    confirm_kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text='✅ Подтвердить')],
+        [KeyboardButton(text='🔙 Назад')]
+    ], resize_keyboard=True)
+
+    await message.answer(
         f"Вы выбрали: <b>{item}</b>\n"
         f"Время приготовления: <b>{time}</b>\n"
         f"Способ оплаты: <b>{pay_text}</b>\n\n"
-        "Нажмите \"Подтвердить\" для отправки заказа.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text='✅ Подтвердить', callback_data='confirm_payment')],
-            [InlineKeyboardButton(text='🔙 Назад', callback_data='menu')]
-        ])
+        "Нажмите \"✅ Подтвердить\" для отправки заказа.",
+        reply_markup=confirm_kb
     )
 
-@dp.callback_query(F.data == 'confirm_payment')
-async def confirm_payment(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    item = data.get('item')
-    time = data.get('time')
-    payment = 'СБП' if data.get('payment') == 'sbp' else 'Картой'
-    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"📥 Новый заказ:\nТовар: <b>{item}</b>\nВремя: {time}\nОплата: {payment}")
-    await callback.answer()
-    await callback.message.edit_text("Спасибо за заказ! ☕\nОн скоро будет готов.", reply_markup=main_menu_kb(callback.from_user.id))
-    await state.clear()
+@dp.message(OrderFSM.confirming_payment)
+async def confirm_payment(message: Message, state: FSMContext):
+    if message.text == '✅ Подтвердить':
+        data = await state.get_data()
+        item = data.get('item')
+        time = data.get('time')
+        payment = 'СБП' if data.get('payment') == 'sbp' else 'Картой'
 
-@dp.callback_query(F.data == 'location')
-async def show_location(callback: CallbackQuery):
+        await bot.send_message(chat_id=ADMIN_CHAT_ID,
+                               text=f"📥 Новый заказ:\nТовар: <b>{item}</b>\nВремя: {time}\nОплата: {payment}")
+
+        await message.answer("Спасибо за заказ! ☕\nОн скоро будет готов.", reply_markup=main_menu_kb(message.from_user.id))
+        await state.clear()
+    elif message.text == '🔙 Назад':
+        await OrderFSM.choosing_payment.set()
+        await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
+    else:
+        await message.answer("Пожалуйста, нажмите '✅ Подтвердить' или '🔙 Назад'.")
+
+@dp.message(F.text == '📍 Где мы находимся?')
+async def show_location(message: Message):
     yandex_link = "https://yandex.ru/maps/org/playa_coffee/63770758952/?ll=37.468172%2C56.141086&utm_source=share&z=18"
-    await callback.answer()
-    await callback.message.edit_text(
+    await message.answer(
         "📍 Мы находимся по адресу: Playa Coffee\n"
         f"<a href='{yandex_link}'>Открыть в Яндекс.Картах</a>",
-        reply_markup=main_menu_kb(callback.from_user.id),
+        reply_markup=main_menu_kb(message.from_user.id),
         disable_web_page_preview=True
     )
 
-@dp.callback_query(F.data == 'contacts')
-async def show_contacts(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.edit_text(
+@dp.message(F.text == '📞 Контакты')
+async def show_contacts(message: Message):
+    await message.answer(
         "📞 Наши контакты:\nTelegram-канал: @playacoffee\nhttps://t.me/playacoffee",
-        reply_markup=main_menu_kb(callback.from_user.id)
+        reply_markup=main_menu_kb(message.from_user.id)
     )
 
-@dp.callback_query(F.data == 'feedback')
-async def feedback_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.edit_text("✍️ Напишите ваш отзыв или вопрос:", reply_markup=main_menu_kb(callback.from_user.id))
+@dp.message(F.text == '✉️ Обратная связь')
+async def feedback_start(message: Message, state: FSMContext):
+    await message.answer("✍️ Напишите ваш отзыв или вопрос:", reply_markup=main_menu_kb(message.from_user.id))
     await state.set_state(FeedbackFSM.writing_feedback)
 
 @dp.message(FeedbackFSM.writing_feedback)
 async def receive_feedback(message: Message, state: FSMContext):
-    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"✉️ Обратная связь от @{message.from_user.username}:\n{message.text}")
+    username = message.from_user.username or message.from_user.full_name
+    await bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"✉️ Обратная связь от @{username}:\n{message.text}")
     await message.answer("Спасибо! Мы учтём ваш отзыв.", reply_markup=main_menu_kb(message.from_user.id))
     await state.clear()
 
-@dp.callback_query(F.data == 'edit_menu')
-async def edit_menu(callback: CallbackQuery):
-    if str(callback.from_user.id) != ADMIN_CHAT_ID:
-        await callback.answer("Доступ запрещён", show_alert=True)
+@dp.message(F.text == '🛠 Редактировать меню')
+async def edit_menu(message: Message):
+    if str(message.from_user.id) != ADMIN_CHAT_ID:
+        await message.answer("Доступ запрещён", reply_markup=main_menu_kb(message.from_user.id))
         return
-    await callback.answer()
-    await callback.message.edit_text(
+    await message.answer(
         "Редактирование меню:\nДобавьте товар в формате: <название>;<цена>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text='🔙 Назад', callback_data='menu')]
-        ])
+        reply_markup=main_menu_kb(message.from_user.id)
     )
 
 @dp.message(F.text.regexp(r'^.+;\d+$'))
@@ -211,6 +252,11 @@ async def add_menu_item(message: Message):
         await message.answer(f"Добавлен новый товар: {name.strip()} за {price}₽", reply_markup=main_menu_kb(message.from_user.id))
     except Exception:
         await message.answer("Ошибка добавления. Убедитесь, что формат такой: название;цена")
+
+@dp.message(F.text == '🔙 Назад')
+async def back_to_main(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Главное меню:", reply_markup=main_menu_kb(message.from_user.id))
 
 # ENTRY POINT
 async def main():
