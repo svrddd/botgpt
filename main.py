@@ -55,7 +55,8 @@ def menu_kb():
     keyboard = []
     row = []
     for i, item in enumerate(menu_data):
-        row.append(KeyboardButton(text=f"{item} - {menu_data[item]['price']}₽"))
+        # Только название товара для удобства выбора
+        row.append(KeyboardButton(text=item))
         if len(row) == 2:
             keyboard.append(row)
             row = []
@@ -78,19 +79,6 @@ def payment_kb():
         [KeyboardButton(text='🔙 Назад')]
     ], resize_keyboard=True)
 
-def confirm_kb():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text='✅ Подтвердить')],
-        [KeyboardButton(text='🔙 Назад')]
-    ], resize_keyboard=True)
-
-# HELPERS
-def parse_menu_item(text):
-    if ' - ' in text and text.endswith('₽'):
-        name = text.split(' - ')[0]
-        return name
-    return None
-
 # HANDLERS
 
 @dp.message(F.text.lower().in_(['start', '/start']))
@@ -102,7 +90,10 @@ async def show_menu(message: Message):
     if not menu_data:
         await message.answer("Меню пока пустое.", reply_markup=main_menu_kb(message.from_user.id))
         return
-    await message.answer("📋 Меню:", reply_markup=menu_kb())
+    text = "📋 <b>Меню:</b>\n\n"
+    for name, data in menu_data.items():
+        text += f"• <b>{name}</b> — {data['price']}₽\n"
+    await message.answer(text, reply_markup=menu_kb())
     await OrderFSM.choosing_item.set()
 
 @dp.message(OrderFSM.choosing_item)
@@ -112,8 +103,8 @@ async def order_item(message: Message, state: FSMContext):
         await message.answer("Главное меню:", reply_markup=main_menu_kb(message.from_user.id))
         return
 
-    item_name = parse_menu_item(message.text)
-    if not item_name or item_name not in menu_data:
+    item_name = message.text
+    if item_name not in menu_data:
         await message.answer("Пожалуйста, выберите товар из меню или нажмите '🔙 Назад'.")
         return
 
@@ -138,21 +129,19 @@ async def choose_time(message: Message, state: FSMContext):
         await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
     elif message.text == 'Указать время':
         await message.answer("Введите время, к которому приготовить заказ (например, 15:30):")
-        # ждём ввода времени в следующем сообщении
         await OrderFSM.next()
     else:
         await message.answer("Пожалуйста, выберите вариант времени из клавиатуры.")
 
 @dp.message(OrderFSM.choosing_payment)
 async def set_custom_time(message: Message, state: FSMContext):
-    text = message.text
-    if text == '🔙 Назад':
+    if message.text == '🔙 Назад':
         await OrderFSM.choosing_time.set()
         await message.answer("Когда приготовить заказ?", reply_markup=time_kb())
         return
 
     # Предполагаем, что пользователь ввёл кастомное время
-    await state.update_data(time=text)
+    await state.update_data(time=message.text)
     await OrderFSM.confirming_payment.set()
     await message.answer("Выберите способ оплаты:", reply_markup=payment_kb())
 
@@ -175,12 +164,17 @@ async def choose_payment(message: Message, state: FSMContext):
     time = data.get('time')
     pay_text = message.text
 
+    confirm_kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text='✅ Подтвердить')],
+        [KeyboardButton(text='🔙 Назад')]
+    ], resize_keyboard=True)
+
     await message.answer(
         f"Вы выбрали: <b>{item}</b>\n"
         f"Время приготовления: <b>{time}</b>\n"
         f"Способ оплаты: <b>{pay_text}</b>\n\n"
         "Нажмите \"✅ Подтвердить\" для отправки заказа.",
-        reply_markup=confirm_kb()
+        reply_markup=confirm_kb
     )
 
 @dp.message(OrderFSM.confirming_payment)
@@ -255,7 +249,6 @@ async def add_menu_item(message: Message):
 
 @dp.message(F.text == '🔙 Назад')
 async def back_to_main(message: Message, state: FSMContext):
-    # Очистим состояния, чтобы кнопка "Назад" всегда возвращала в главное меню
     await state.clear()
     await message.answer("Главное меню:", reply_markup=main_menu_kb(message.from_user.id))
 
@@ -265,3 +258,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
